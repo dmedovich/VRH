@@ -69,28 +69,21 @@ func TestOwnerBatchReusesDst(t *testing.T) {
 	}
 }
 
-// fakeBackend is a minimal simd.Backend used to prove that OwnerBatch
-// actually delegates scoring to the ring's configured backend, instead of
-// silently recomputing scores with a hardcoded scalar path. A regression
-// here means OwnerBatch stopped honoring WithBackend, which previously
-// caused it to always run at scalar speed even when AVX2 was requested.
+// fakeBackend verifies that batch lookup honors the configured backend.
 type fakeBackend struct {
-	scoreCalls int
+	ownerCalls int
 }
 
 func (f *fakeBackend) Name() string    { return "fake" }
 func (f *fakeBackend) Available() bool { return true }
 
 func (f *fakeBackend) OwnerVRH(key uint64, nodes []uint64) uint64 {
-	panic("fakeBackend.OwnerVRH should not be called by OwnerBatch")
+	f.ownerCalls++
+	return nodes[int(key%uint64(len(nodes)))]
 }
 
 func (f *fakeBackend) ScoreVRHNodes(key uint64, nodes []uint64, out []uint64) {
-	f.scoreCalls++
-
-	for i, node := range nodes {
-		out[i] = node // deterministic, order-preserving stand-in score
-	}
+	panic("batch lookup should not materialize scores")
 }
 
 func TestOwnerBatchDelegatesToConfiguredBackend(t *testing.T) {
@@ -105,19 +98,45 @@ func TestOwnerBatchDelegatesToConfiguredBackend(t *testing.T) {
 
 	got := ring.OwnerBatch(keys, nil)
 
-	if fb.scoreCalls != len(keys) {
+	if fb.ownerCalls != len(keys) {
 		t.Fatalf(
-			"expected ScoreVRHNodes to be called once per key (%d calls), got %d",
+			"expected OwnerVRH to be called once per key (%d calls), got %d",
 			len(keys),
-			fb.scoreCalls,
+			fb.ownerCalls,
 		)
 	}
 
-	// fakeBackend scores each node as itself, so the max-scoring node is
-	// always the largest node ID (9), independent of the key.
 	for i, owner := range got {
-		if owner != 9 {
-			t.Fatalf("key=%d: expected owner=9 from fakeBackend, got %d", keys[i], owner)
+		want := ring.nodes[keys[i]%uint64(len(ring.nodes))]
+		if owner != want {
+			t.Fatalf("key=%d: expected owner=%d from fakeBackend, got %d", keys[i], want, owner)
+		}
+	}
+}
+
+func TestOwnerBatchNoAllocationsAndInPlace(t *testing.T) {
+	for _, backend := range []Backend{BackendScalar, BackendAVX2} {
+		if backend == BackendAVX2 && !simd.AVX2().Available() {
+			continue
+		}
+		ring, err := New([]uint64{0, 1, 1 << 63, 17, 999}, WithBackend(backend))
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys := []uint64{0, 123, 1 << 63, ^uint64(0)}
+		dst := make([]uint64, len(keys))
+		if n := testing.AllocsPerRun(100, func() { ring.OwnerBatch(keys, dst) }); n != 0 {
+			t.Fatalf("backend=%v: %v allocations with reusable dst", backend, n)
+		}
+		want := ring.OwnerBatch(keys, nil)
+		got := ring.OwnerBatch(keys, keys)
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("in-place index %d: got %d want %d", i, got[i], want[i])
+			}
+		}
+		if len(ring.OwnerBatch(nil, dst)) != 0 {
+			t.Fatal("empty batch returned owners")
 		}
 	}
 }

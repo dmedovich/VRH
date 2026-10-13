@@ -1,37 +1,56 @@
 package algorithms
 
-// E19Score calculates the VRH score.
-//
-// Every transformation of node is bijective modulo 2^64:
-//
-//	k  = SplitMix64(key)
-//	x  = node ^ k
-//	x += ROTL(k, 23)
-//	x ^= x >> 29
-//	x += ROTL(k, 41)
-//	x ^= x << 17
-//	x ^= x >> 32
-//
-// The construction deliberately avoids 64-bit multiplication in the
-// node-scoring path so it can be implemented efficiently with AVX2.
-// algorithms/vrh.go
+import "math/bits"
 
+// ScoreVersion identifies the ownership mapping. Version 3 uses N3 and
+// remaps keys relative to versions 1 and 2.
+const ScoreVersion = 3
+
+// VRHScore returns the N3 rendezvous score for a key and node ID.
+// For a fixed key, the node-to-score mapping is a permutation of uint64.
+// This prevents ties; it does not prove uniform ownership for every node set.
 func VRHScore(key, node uint64) uint64 {
-	k := SplitMix64(key)
-	return VRHScoreK(k, node)
+	return VRHScoreK(VRHKey(key), node)
 }
 
+// VRHKey prepares a key once for a scan over multiple nodes.
+func VRHKey(key uint64) uint64 {
+	key += 0x9e3779b97f4a7c15
+	key ^= key >> 32
+	key *= 0xbf58476d1ce4e5b9
+	return key ^ key>>27
+}
+
+// VRHScoreK scores a node using a key prepared by VRHKey.
 func VRHScoreK(k, node uint64) uint64 {
-	x := node ^ k
-	x += bitsRotateLeft64(k, 23)
-	x ^= x >> 29
-	x += bitsRotateLeft64(k, 41)
-	x ^= x << 17
-	x ^= x >> 32
+	return n3Tail(LinearNode(k ^ node))
+}
+
+// LinearNode is N3's invertible linear transform. Preparing nodes with it
+// at ring construction avoids repeating this transform for every lookup.
+func LinearNode(x uint64) uint64 {
+	return x ^ bits.RotateLeft64(x, 17) ^ bits.RotateLeft64(x, 43)
+}
+
+// InverseLinearNode reverses LinearNode.
+func InverseLinearNode(x uint64) uint64 {
+	for i := range 6 {
+		x ^= bits.RotateLeft64(x, (17<<i)%64) ^ bits.RotateLeft64(x, (43<<i)%64)
+	}
 	return x
 }
 
-// bitsRotateLeft64 performs a 64-bit rotate-left.
-func bitsRotateLeft64(x uint64, n uint) uint64 {
-	return (x << n) | (x >> (64 - n))
+// VRHScorePreparedK scores a transformed node using a transformed prepared key.
+func VRHScorePreparedK(transformedKey, transformedNode uint64) uint64 {
+	return n3Tail(transformedKey ^ transformedNode)
+}
+
+func n3Tail(x uint64) uint64 {
+	x *= 0x2cb0f69f4abea221
+	x ^= x >> 27
+	x = bits.RotateLeft64(x, 23)
+	x *= 0xb19e04cb9dce3147
+	x ^= x >> 31
+	x *= 0xbf58476d1ce4e5b9
+	return x ^ x>>33
 }

@@ -3,6 +3,7 @@ package vrh
 import (
 	"errors"
 	"fmt"
+
 	"github.com/dmedovich/VRH/algorithms"
 	"github.com/dmedovich/VRH/simd"
 )
@@ -40,11 +41,10 @@ func New(nodes []uint64, opts ...Option) (*Ring, error) {
 		seen[node] = struct{}{}
 	}
 
-	backend, err := selectBackend(cfg.Backend)
+	backend, err := selectBackend(cfg.Backend, copied)
 	if err != nil {
 		return nil, err
 	}
-
 	return &Ring{
 		nodes:   copied,
 		backend: backend,
@@ -52,22 +52,16 @@ func New(nodes []uint64, opts ...Option) (*Ring, error) {
 }
 
 // selectBackend resolves the requested backend.
-func selectBackend(backend Backend) (simd.Backend, error) {
+func selectBackend(backend Backend, nodes []uint64) (simd.Backend, error) {
 	switch backend {
 	case BackendAuto:
-		return simd.Auto(), nil
+		return newPreparedBackend(nodes), nil
 
 	case BackendScalar:
-		return simd.Scalar(), nil
+		return newPreparedBackend(nodes), nil
 
 	case BackendAVX2:
-		b := simd.AVX2()
-
-		if !b.Available() {
-			return nil, errors.New("vrh: AVX2 backend requested but AVX2 is not available")
-		}
-
-		return b, nil
+		return nil, errors.New("vrh: AVX2 backend does not implement the N3 score")
 
 	default:
 		return nil, fmt.Errorf("vrh: unknown backend: %d", backend)
@@ -95,16 +89,17 @@ func (r *Ring) Owner(key uint64) uint64 {
 	return r.backend.OwnerVRH(key, r.nodes)
 }
 
-// OwnerScalar returns the scalar E19 owner.
+// OwnerScalar returns the scalar VRH owner.
 //
 // This method exists primarily for correctness tests and benchmarks.
 func (r *Ring) OwnerScalar(key uint64) uint64 {
+	k := algorithms.VRHKey(key)
 	owner := r.nodes[0]
-	best := algorithms.VRHScore(key, owner)
+	best := algorithms.VRHScoreK(k, owner)
 
 	for i := 1; i < len(r.nodes); i++ {
 		node := r.nodes[i]
-		score := algorithms.VRHScore(key, node)
+		score := algorithms.VRHScoreK(k, node)
 
 		if score > best {
 			best = score

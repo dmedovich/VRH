@@ -4,15 +4,15 @@ package vrh
 type Backend uint8
 
 const (
-	// BackendAuto selects the best backend available on the current CPU.
+	// BackendAuto selects the N3 scalar owner: native amd64 for larger rings,
+	// portable Go elsewhere.
 	BackendAuto Backend = iota
 
-	// BackendScalar forces the portable scalar implementation.
+	// BackendScalar selects N3 scalar (native amd64 for larger rings, Go elsewhere).
 	BackendScalar
 
-	// BackendAVX2 requests the AVX2 implementation.
-	//
-	// If AVX2 support is not available, Ring construction will return an error.
+	// BackendAVX2 is reserved for a future N3 implementation. New returns an
+	// error for this option, even on CPUs with AVX2.
 	BackendAVX2
 )
 

@@ -65,7 +65,7 @@ func sqrt(x float64) float64 {
 
 	z := x
 
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		z = 0.5 * (z + x/z)
 	}
 

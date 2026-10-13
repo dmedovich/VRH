@@ -1,5 +1,5 @@
 package simd
-
+//not implement the N3
 import "github.com/dmedovich/VRH/algorithms"
 
 type scalarBackend struct{}
@@ -14,11 +14,16 @@ func (scalarBackend) Available() bool {
 
 func (scalarBackend) OwnerVRH(key uint64, nodes []uint64) uint64 {
 	if len(nodes) == 0 {
-		panic("e19/simd: node list is empty")
+		panic("vrh/simd: node list is empty")
 	}
 
-	k := algorithms.SplitMix64(key)
+	k := algorithms.VRHKey(key)
 
+	return scalarOwner(k, nodes)
+}
+
+// scalarOwnerGo is the portable implementation and the small-ring path.
+func scalarOwnerGo(k uint64, nodes []uint64) uint64 {
 	owner := nodes[0]
 	best := algorithms.VRHScoreK(k, owner)
 
@@ -44,7 +49,7 @@ func (scalarBackend) ScoreVRHNodes(
 		panic("vrh/simd: output buffer is too small")
 	}
 
-	k := algorithms.SplitMix64(key)
+	k := algorithms.VRHKey(key)
 
 	for i, node := range nodes {
 		out[i] = algorithms.VRHScoreK(k, node)

@@ -36,7 +36,7 @@ func TestCheckVRHPermutation(t *testing.T) {
 
 	for key := range uint64(100) {
 		if !CheckVRHPermutation(key, nodes) {
-			t.Fatalf("key=%d: E19 scores are not unique", key)
+			t.Fatalf("key=%d: VRH scores are not unique", key)
 		}
 	}
 }

@@ -1,5 +1,5 @@
 //go:build !amd64
-
+//not implement the N3
 package simd
 
 type avx2Backend struct{}
@@ -16,8 +16,12 @@ func (avx2Backend) Available() bool {
 	return false
 }
 
-func (avx2Backend) ScoreE19Nodes(key uint64, nodes []uint64, out []uint64) {
-	panic("e19/simd: AVX2 backend is not available on this architecture")
+func (avx2Backend) OwnerVRH(key uint64, nodes []uint64) uint64 {
+	panic("vrh/simd: AVX2 does not implement the N3 score")
+}
+
+func (avx2Backend) ScoreVRHNodes(key uint64, nodes []uint64, out []uint64) {
+	panic("vrh/simd: AVX2 does not implement the N3 score")
 }
 
 func newAutoBackend() Backend {

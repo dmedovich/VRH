@@ -1,32 +1,28 @@
 # VRH
 
-VRH is a scoring function for rendezvous/HRW hashing, built as a composition
-of bijective (mod 2⁶⁴) transforms, with an AVX2-vectorized implementation of
-the ownership scan.
+VRH is a Go rendezvous hashing library for arbitrary `uint64` node IDs. It
+selects the node with the highest N3 score for each `uint64` key. The score
+mapping is identified by `algorithms.ScoreVersion == 3`.
 
-- Arbitrary, sparse `uint64` node identifiers — no dense/sequential bucket
-  numbering required.
-- Proven no-collision property: for a fixed key, distinct nodes always
-  produce distinct scores (see [`verify/`](./verify)).
-- AVX2 backend with automatic fallback to a scalar implementation on
-  unsupported hardware.
-- Zero allocations per lookup.
+N3 is a permutation of the 64-bit node space for each fixed key, so distinct
+node IDs never tie. Ownership balance was checked empirically on structured,
+random and adversarial node sets; permutation alone does not prove uniform
+ownership for every possible set. Lookups scan all nodes in O(N) time.
 
-VRH does **not** change the asymptotic complexity of rendezvous hashing —
-ownership lookup remains O(N). It reduces the constant factor for the case
-where node identifiers are arbitrary and dense renumbering is not an option.
-If your bucket set is already densely numbered `[0, n-1]`, algorithms like
-Jump Consistent Hash or Power Consistent Hash are asymptotically better
-fits — see the design writeup linked below for the tradeoff.
+Changing from a previous VRH score version remaps keys. Every participant in a
+cluster must use the same score version. There is no automatic negotiation.
 
 ## Install
 
-```
+```sh
 go get github.com/dmedovich/VRH
 ```
 
-Requires Go 1.27.1+. AVX2 acceleration requires `amd64`; other architectures
-automatically use the scalar backend with identical results.
+Requires Go 1.27.1 or newer. The large-ring N3 owner scan uses native amd64
+code; other architectures use portable Go with identical scores and owners.
+`BackendAuto` and `BackendScalar` select this scalar implementation. The old
+AVX2 implementation used score v2, so `BackendAVX2` is unavailable for N3 and
+returns an error from `New`.
 
 ## Usage
 
@@ -34,54 +30,43 @@ automatically use the scalar backend with identical results.
 package main
 
 import (
-	"fmt"
+    "fmt"
 
-	"github.com/dmedovich/VRH/vrh"
+    "github.com/dmedovich/VRH/vrh"
 )
 
 func main() {
-	nodes := []uint64{101, 202, 303, 404}
+    ring, err := vrh.New([]uint64{101, 202, 303, 404})
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(ring.Owner(12345))
 
-	ring, err := vrh.New(nodes, vrh.WithBackend(vrh.BackendAuto))
-	if err != nil {
-		panic(err)
-	}
-
-	owner := ring.Owner(12345)
-	fmt.Println("owner:", owner)
-
-	// Batch lookup reuses an internal scoring buffer and honors the
-	// configured backend (scalar or AVX2).
-	keys := []uint64{1, 2, 3, 4, 5}
-	owners := ring.OwnerBatch(keys, nil)
-	fmt.Println("owners:", owners)
+    keys := []uint64{1, 2, 3, 4}
+    owners := ring.OwnerBatch(keys, nil)
+    fmt.Println(owners)
 }
 ```
 
-## Package layout
+`New` rejects empty or duplicate node sets and copies the supplied IDs.
+`Nodes` returns a copy. A ring can be queried concurrently after construction.
+`Owner` allocates no memory per lookup; `OwnerBatch` also allocates no memory
+when its destination has room for all keys. The destination may be the same
+slice as the keys.
 
-| Package | Contents |
-|---|---|
-| [`vrh`](./vrh) | Public API: `Ring`, `New`, `Owner`, `OwnerBatch` |
-| [`algorithms`](./algorithms) | `SplitMix64`, `VRHScore` — the scoring primitives |
-| [`simd`](./simd) | Backend interface, scalar implementation, AVX2 implementation |
-| [`verify`](./verify) | Executable checks of the no-collision property, including adversarial inputs |
-| [`metrics`](./metrics) | Optional helpers for measuring balance/collisions/migration of a live ring |
+## Score
 
-## Design and benchmarks
+`algorithms.VRHScore(key, node)` is the reference score. `VRHKey` prepares a
+key once for scoring multiple nodes, and `VRHScoreK` accepts that prepared key.
+The node transform and tail are exposed for precomputed scans. `vrh.Ring`
+precomputes transformed IDs for rings with more than 16 nodes and uses the
+validated native owner scan on amd64. `OwnerScalar` provides a reference scan.
+The exact [N3 formula and permutation argument](docs/n3.md) are documented
+separately.
 
-This repository contains only the library. The design writeup (bijectivity
-proof, related work.
+The library supports equal weights only. It is not a cryptographic hash or a
+defense against chosen inputs. No universal 33/33/33 guarantee is claimed.
+The measured performance and distribution are specific to the documented
+datasets and machine.
 
-## Limitations
-
-- Equal-weight ownership only; weighted rendezvous hashing is not
-  implemented.
-- Benchmarked on AMD Ryzen 5 2600 only; no cross-architecture performance
-  claim is made by this repository.
-- Ownership lookup is O(N). This library trades a lower constant for
-  support of arbitrary node identifiers — it is not a drop-in replacement
-  for O(1)/O(log N) algorithms that assume dense bucket numbering.
-
-## License
-see [LICENSE](./LICENSE).
+Licensed under [Apache 2.0](LICENSE).
